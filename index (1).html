@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Cafeteria</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Arial,sans-serif;background:#f5f7fb;color:#172033}
+  .wrap{max-width:720px;margin:auto;padding:24px}
+  .card{background:white;border-radius:20px;padding:24px;margin:16px 0;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+  h1{margin:0 0 8px;font-size:30px}
+  h2{margin-top:0}
+  .muted{color:#667085}
+  .big{font-size:64px;font-weight:800;text-align:center;margin:18px 0}
+  button{border:0;border-radius:12px;padding:14px 18px;font-size:16px;font-weight:700;cursor:pointer;background:#172033;color:white;width:100%;margin-top:10px}
+  button.secondary{background:#e9edf5;color:#172033}
+  button.danger{background:#b42318}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .stat{background:#f1f4f9;border-radius:14px;padding:16px;text-align:center}
+  .stat strong{display:block;font-size:30px;margin-top:5px}
+  .ticket{background:#eef7ff;border:2px dashed #4a90e2;border-radius:16px;padding:18px;text-align:center}
+  .ticket-number{font-size:48px;font-weight:800}
+  .status{padding:12px;border-radius:12px;background:#ecfdf3;color:#027a48;text-align:center;font-weight:700}
+  .error{padding:12px;border-radius:12px;background:#fef3f2;color:#b42318;margin-top:12px}
+  .admin{border-left:5px solid #172033}
+  a{color:#2457d6}
+  @media(max-width:520px){.grid{grid-template-columns:1fr}.big{font-size:52px}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import {
+  getDatabase, ref, onValue, runTransaction, set, get
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA4ETUv9HcSCmihDiujkdVJ9nyQfUACra8",
+  authDomain: "smart-cafeteria-c9c6e.firebaseapp.com",
+  databaseURL: "https://smart-cafeteria-c9c6e-default-rtdb.firebaseio.com",
+  projectId: "smart-cafeteria-c9c6e",
+  storageBucket: "smart-cafeteria-c9c6e.firebasestorage.app",
+  messagingSenderId: "336294410010",
+  appId: "1:336294410010:web:6ede3acb40e280be50dea3"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const queueRef = ref(db, "queue");
+const appEl = document.getElementById("app");
+const isAdmin = new URLSearchParams(location.search).get("admin") === "1";
+
+function pad(n){ return String(n).padStart(3,"0"); }
+function ticket(n){ return n > 0 ? "A" + pad(n) : "—"; }
+
+async function ensureQueue(){
+  const snap = await get(queueRef);
+  if(!snap.exists()){
+    await set(queueRef, {currentNumber:0,nextNumber:1,orders:{}});
+  }
+}
+
+function render(data){
+  const current = Number(data?.currentNumber || 0);
+  const next = Number(data?.nextNumber || 1);
+  const orders = data?.orders || {};
+  const assigned = Object.values(orders);
+  const waiting = assigned.filter(o => Number(o.number) > current && o.status !== "completed").length;
+
+  if(isAdmin){
+    appEl.innerHTML = `
+      <div class="card admin">
+        <h1>🧑‍💼 Smart Cafeteria — Admin</h1>
+        <p class="muted">Halaman staf untuk memanggil nombor pelanggan.</p>
+      </div>
+      <div class="card">
+        <div class="muted">CURRENT NUMBER</div>
+        <div class="big">${ticket(current)}</div>
+        <div class="grid">
+          <div class="stat">Waiting<strong>${waiting}</strong></div>
+          <div class="stat">Next<strong>${ticket(next)}</strong></div>
+        </div>
+        <button id="call">Panggil Nombor Seterusnya</button>
+        <button class="danger" id="reset">Reset Queue</button>
+        <div id="msg"></div>
+      </div>
+      <div class="card">
+        <h2>Senarai Giliran</h2>
+        <div id="list"></div>
+      </div>
+      <div class="card"><a href="./">← Kembali ke halaman pelanggan</a></div>
+    `;
+
+    const list = assigned.sort((a,b)=>a.number-b.number)
+      .map(o => `<p><strong>${ticket(o.number)}</strong> — ${o.status || "waiting"}</p>`).join("");
+    document.getElementById("list").innerHTML = list || "<p class='muted'>Belum ada pelanggan.</p>";
+
+    document.getElementById("call").onclick = async ()=>{
+      const result = await runTransaction(queueRef, q=>{
+        if(!q) q={currentNumber:0,nextNumber:1,orders:{}};
+        const c=Number(q.currentNumber||0), n=Number(q.nextNumber||1);
+        if(c >= n-1) return q;
+        q.currentNumber=c+1;
+        q.orders=q.orders||{};
+        Object.keys(q.orders).forEach(k=>{
+          if(Number(q.orders[k].number)===q.currentNumber) q.orders[k].status="called";
+        });
+        return q;
+      });
+      document.getElementById("msg").innerHTML =
+        result.committed ? `<div class="status">Nombor ${ticket(Number((result.snapshot.val()||{}).currentNumber))} dipanggil.</div>`
+                         : `<div class="error">Tiada pelanggan yang menunggu.</div>`;
+    };
+
+    document.getElementById("reset").onclick = async ()=>{
+      if(confirm("Reset semua nombor giliran?")){
+        await set(queueRef,{currentNumber:0,nextNumber:1,orders:{}});
+      }
+    };
+  }else{
+    const myTicket = localStorage.getItem("smartCafeteriaTicket");
+    appEl.innerHTML = `
+      <div class="card">
+        <h1>🍽️ Smart Cafeteria</h1>
+        <p class="muted">Sistem nombor giliran digital</p>
+      </div>
+      <div class="card">
+        <div class="grid">
+          <div class="stat">Now Serving<strong>${ticket(current)}</strong></div>
+          <div class="stat">Waiting<strong>${waiting}</strong></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Ambil Nombor Giliran</h2>
+        <p class="muted">Selepas membuat bayaran, tekan butang di bawah untuk mendapatkan nombor.</p>
+        ${myTicket ? `
+          <div class="ticket">
+            <div>Nombor anda</div>
+            <div class="ticket-number">${myTicket}</div>
+            <div class="muted">Sila tunggu sehingga nombor anda dipanggil.</div>
+          </div>
+          <button class="secondary" id="newTicket">Ambil nombor baru</button>
+        ` : `<button id="getTicket">🎟️ Get Queue Number</button>`}
+        <div id="msg"></div>
+      </div>
+      <div class="card">
+        <h2>Status</h2>
+        <p class="muted">Halaman ini akan dikemas kini secara automatik apabila staf memanggil nombor.</p>
+      </div>
+    `;
+
+    const getBtn=document.getElementById("getTicket");
+    if(getBtn) getBtn.onclick=async()=>{
+      const result=await runTransaction(queueRef,q=>{
+        if(!q) q={currentNumber:0,nextNumber:1,orders:{}};
+        const n=Number(q.nextNumber||1);
+        q.nextNumber=n+1;
+        q.orders=q.orders||{};
+        q.orders["A"+pad(n)+"_"+Date.now()]={number:n,status:"waiting",createdAt:Date.now()};
+        return q;
+      });
+      if(result.committed){
+        const val=result.snapshot.val();
+        const latest=Number(val.nextNumber)-1;
+        localStorage.setItem("smartCafeteriaTicket",ticket(latest));
+        render(val);
+      }
+    };
+
+    const newBtn=document.getElementById("newTicket");
+    if(newBtn) newBtn.onclick=()=>{
+      localStorage.removeItem("smartCafeteriaTicket");
+      render(data);
+    };
+  }
+}
+
+ensureQueue().then(()=>{
+  onValue(queueRef,snap=>render(snap.val()||{currentNumber:0,nextNumber:1,orders:{}}),
+    err=>{appEl.innerHTML=`<div class="card"><h1>⚠️ Database error</h1><div class="error">${err.message}</div></div>`});
+}).catch(err=>{
+  appEl.innerHTML=`<div class="card"><h1>⚠️ Firebase belum bersambung</h1><div class="error">${err.message}</div></div>`;
+});
+</script>
+</body>
+</html>
