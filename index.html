@@ -62,7 +62,7 @@ async function ensureQueue(){
     await set(queueRef, {currentNumber:0,nextNumber:1,orders:{}});
   }
 }function callCustomer(number) { if (!number) return;
-const message = Nombor ${number}, sila ke kaunter.; const speech = new SpeechSynthesisUtterance(message);
+const message = `Nombor ${number} sedang dipanggil.`; const speech = new SpeechSynthesisUtterance(message);
 speech.lang = "ms-MY"; speech.rate = 0.9; speech.pitch = 1;
 window.speechSynthesis.cancel(); window.speechSynthesis.speak(speech); }
 
